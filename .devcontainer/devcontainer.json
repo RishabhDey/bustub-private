@@ -1,0 +1,8 @@
+{
+      "name": "Bustub UNC Development",
+      "image": "ubuntu:22.04",
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+}
