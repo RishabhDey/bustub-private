@@ -4,5 +4,6 @@
       "extensions": [
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode"
-      ]
+      ],
+      "postCreateCommand" : "./build_support/packages.sh"
 }
