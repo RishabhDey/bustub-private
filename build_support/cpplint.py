@@ -49,6 +49,10 @@ import itertools
 import math  # for log
 import os
 import re
+def warn(*args, **kwargs):
+    pass
+import warnings
+warnings.warn = warn
 import sre_compile
 import string
 import sys
