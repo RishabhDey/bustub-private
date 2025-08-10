@@ -5,5 +5,5 @@
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode"
       ],
-      "postCreateCommand" : "echo y | ./build_support/packages.sh"
+      "postCreateCommand" : "echo y | ./build_support/packages.sh; git remote add public https://github.com/bsb20/bustub"
 }
