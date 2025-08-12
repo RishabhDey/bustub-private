@@ -2,7 +2,7 @@
 
 -----------------
 
-[![Build Status](https://github.com/cmu-db/bustub/actions/workflows/cmake.yml/badge.svg)](https://github.com/cmu-db/bustub/actions/workflows/cmake.yml)
+[![Build Status](https://github.com/bsb20/bustub/actions/workflows/cmake.yml/badge.svg)](https://github.com/bsb20/bustub/actions/workflows/cmake.yml)
 
 This is a fork of BusTub used for COMP 421 at UNC Chapel Hill.
 
