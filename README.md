@@ -125,6 +125,8 @@ If you prefer to develop directly in a Linux environment, you can start and atta
 ```./docker_exec.sh```
 This script will create and set up a container image for bustub, or attach to a running bustub container if one already exists.
 
+Some MacOS users have reported a `command not found: docker` error when first running this script.  If you see this error, you most likely need to [add docker to your PATH](https://stackoverflow.com/questions/64009138/docker-command-not-found-when-running-on-mac).
+
 ### Option 2: VS Code Dev Containers
 If you prefer to use VS Code, this repository is set up to integrate with the VS Code Dev Containers extension.
 You can use this by:
