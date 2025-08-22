@@ -181,21 +181,20 @@ TEST(HyperLogLogTest, DISABLED_ParallelTest1) {
   auto ans = obj.GetCardinality();
   ASSERT_EQ(ans, 13009);
 
-  std::vector<std::thread> threads2;
-  for (uint64_t k = 0; k < 3000; k++) {
-    threads2.emplace_back(std::thread([&]() { obj.AddElem("Andy"); }));
-    threads2.emplace_back(std::thread([&]() { obj.AddElem("Connor"); }));
-    threads2.emplace_back(std::thread([&]() { obj.AddElem("J-How"); }));
-    threads2.emplace_back(std::thread([&]() { obj.AddElem("Kunle"); }));
-  }
+  for (uint64_t k = 0; k < 10000; k++) {
+    auto obj2 = HyperLogLog<std::string>(static_cast<int16_t>(1));
+    std::vector<std::thread> threads2;
+    threads2.emplace_back(std::thread([&]() { obj2.AddElem("Andy"); }));
+    threads2.emplace_back(std::thread([&]() { obj2.AddElem("Zhongrui asdfasdfdsfasdf ++"); }));
 
-  for (auto &thread : threads2) {
-    thread.join();
-  }
+    for (auto &thread : threads2) {
+      thread.join();
+    }
 
-  obj.ComputeCardinality();
-  ans = obj.GetCardinality();
-  ASSERT_EQ(ans, 13010);
+    obj2.ComputeCardinality();
+    ans = obj2.GetCardinality();
+    ASSERT_EQ(ans, 3);
+  }
 }
 
 TEST(HyperLogLogTest, DISABLED_PrestoBasicTest1) {
