@@ -143,3 +143,8 @@ $ make -j`nproc`
 ***Caution for macOS:*** While these steps may work for native macOS builds, there are some differences between macOS and Linux (i.e., mutex behavior) that might cause test cases
 to produce different results on different platforms. We recommend that students use a Linux VM for running
 test cases and reproducing errors whenever possible.
+
+## Debugging
+Command line users should run test/benchmark binaries directly with an appropriate debugger such as `gdb`
+
+VS Code users should make use of the visual debugger.  To leverage this workflow, install [the clangd extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd).  To debug the project tests, you may find it helpful to use the example config files `./build_support/launch.json` and `./build_support/tasks.json` by dragging them into your `.vscode` directory once it is generated.
