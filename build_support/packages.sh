@@ -96,7 +96,8 @@ install_linux() {
       pkg-config \
       zlib1g-dev \
       libelf-dev \
-      libdwarf-dev
+      libdwarf-dev\
+      gdb
 }
 
 main "$@"
