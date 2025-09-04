@@ -59,6 +59,8 @@ class HyperLogLogPresto {
   /** @brief Returns the cardinality of the set. */
   auto GetCardinality() const -> uint64_t { return cardinality_; }
 
+  auto GetRegisterValue(uint16_t index) -> uint64_t;
+
   auto AddElem(KeyType val) -> void;
 
   auto ComputeCardinality() -> void;
@@ -92,6 +94,7 @@ class HyperLogLogPresto {
   uint64_t cardinality_;
 
   // TODO(student) - can add more data structures as required
+  int16_t b_;
 };
 
 }  // namespace bustub
