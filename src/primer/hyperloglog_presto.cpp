@@ -67,7 +67,7 @@ auto HyperLogLogPresto<T>::ComputeCardinality() -> void {
 
   if (b_ == 0) {
     uint64_t val = GetRegisterValue(0);
-    cardinality_ = static_cast<size_t>(1ULL << val);
+    cardinality_ = static_cast<size_t>(std::floor(0.79402 * std::pow(2.0, static_cast<double>(val))));
     return;
   }
 

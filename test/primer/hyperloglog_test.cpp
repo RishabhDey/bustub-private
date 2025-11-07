@@ -303,7 +303,7 @@ TEST(HyperLogLogTest, PrestoCase2) {
 
   obj.AddElem(0);
   obj.ComputeCardinality();
-  // ASSERT_EQ(obj.GetCardinality(), 14647083729406857216UL);
+  ASSERT_EQ(obj.GetCardinality(), 14647083729406857216UL);
   ASSERT_EQ(obj.GetDenseBucket()[0].to_ullong(), 0);
   ASSERT_EQ(obj.GetOverflowBucketofIndex(0).to_ullong(), 4);
 }
