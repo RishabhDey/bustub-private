@@ -124,6 +124,10 @@ class BPlusTree {
 
   auto ToPrintableBPlusTree(page_id_t root_id) -> PrintableBPlusTree;
 
+  auto SplitInsert(const KeyType &key, const ValueType &value, std::vector<page_id_t> parents, page_id_t leaf_page_id) -> bool;
+  auto InsertIntoParent(std::vector<page_id_t> &parents, page_id_t left_child, const KeyType &key, page_id_t right_child) -> bool;
+  auto SplitInternal(std::vector<page_id_t> &parents, page_id_t internal_page_id, const KeyType &key, page_id_t right_child) -> bool;
+
   // member variable
   std::string index_name_;
   BufferPoolManager *bpm_;

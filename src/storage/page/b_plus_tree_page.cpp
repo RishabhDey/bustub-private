@@ -25,7 +25,7 @@ void BPlusTreePage::SetPageType(IndexPageType page_type) { page_type_ = page_typ
  * Helper methods to get/set size (number of key/value pairs stored in that
  * page)
  */
-auto BPlusTreePage::GetSize() const -> int { return size_ }
+auto BPlusTreePage::GetSize() const -> int { return size_; }
 void BPlusTreePage::SetSize(int size) { size_ = size; }
 void BPlusTreePage::ChangeSizeBy(int amount) { size_ += amount; }
 
@@ -40,6 +40,6 @@ void BPlusTreePage::SetMaxSize(int size) { max_size_ = size; }
  * Generally, min page size == max page size / 2
  * But whether you will take ceil() or floor() depends on your implementation
  */
-auto BPlusTreePage::GetMinSize() const -> int { return (max_size_ + 1) / 2; }
+auto BPlusTreePage::GetMinSize() const -> int { return (max_size_) / 2; }
 
 }  // namespace bustub

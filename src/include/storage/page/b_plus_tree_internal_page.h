@@ -43,9 +43,15 @@ namespace bustub {
  * | PAGE_ID(1) | PAGE_ID(2) | ... | PAGE_ID(n) |
  *  ---------------------------------------------
  */
+template <class KeyType, class ValueType, class KeyComparator>
+class BPlusTree;
+
 INDEX_TEMPLATE_ARGUMENTS
 class BPlusTreeInternalPage : public BPlusTreePage {
  public:
+  
+  template <typename K, typename V, typename C>
+  friend class BPlusTree;
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreeInternalPage() = delete;
   BPlusTreeInternalPage(const BPlusTreeInternalPage &other) = delete;
@@ -90,7 +96,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
     return kstr;
   }
 
- private:
+ public:
   // Array members for page data.
   KeyType key_array_[INTERNAL_PAGE_SLOT_CNT];
   ValueType page_id_array_[INTERNAL_PAGE_SLOT_CNT];
