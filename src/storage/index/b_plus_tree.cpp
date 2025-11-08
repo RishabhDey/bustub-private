@@ -382,9 +382,481 @@ auto BPLUSTREE_TYPE::SplitInternal(std::vector<page_id_t> &parents, page_id_t in
  */
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
-  // Declaration of context instance.
-  Context ctx;
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
+  if (IsEmpty()) return;
+
+  ReadPageGuard header_guard = bpm_->ReadPage(header_page_id_);
+  auto header = header_guard.As<BPlusTreeHeaderPage>();
+  page_id_t root_id = header->root_page_id_;
+  header_guard.Drop();
+
+  // Find the leaf containing the key
+  std::vector<page_id_t> parent_path;
+  page_id_t current_id = root_id;
+
+  while (true) {
+    ReadPageGuard guard = bpm_->ReadPage(current_id);
+    auto page = guard.As<BPlusTreePage>();
+    
+    if (page->IsLeafPage()) {
+      guard.Drop();
+      break;
+    }
+    
+    auto internal = guard.As<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    int idx = 1;
+    while (idx < internal->GetSize() && comparator_(key, internal->KeyAt(idx)) >= 0) {
+      idx++;
+    }
+    idx--;
+    
+    parent_path.push_back(current_id);
+    current_id = internal->ValueAt(idx);
+    guard.Drop();
+  }
+
+  // Delete from leaf
+  WritePageGuard leaf_guard = bpm_->WritePage(current_id);
+  auto leaf = leaf_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+
+  // Find the key
+  int key_idx = -1;
+  for (int i = 0; i < leaf->GetSize(); i++) {
+    if (comparator_(leaf->KeyAt(i), key) == 0) {
+      key_idx = i;
+      break;
+    }
+  }
+  
+  if (key_idx == -1) {
+    return;  // Key not found
+  }
+
+  // Remove the key by shifting
+  for (int i = key_idx; i < leaf->GetSize() - 1; i++) {
+    leaf->key_array_[i] = leaf->key_array_[i + 1];
+    leaf->rid_array_[i] = leaf->rid_array_[i + 1];
+  }
+  leaf->SetSize(leaf->GetSize() - 1);
+
+  // Check if we deleted the first key - need to update parent
+  if (key_idx == 0 && leaf->GetSize() > 0 && !parent_path.empty()) {
+    UpdateParentKey(parent_path, current_id, leaf->KeyAt(0));
+  }
+
+  // Check for underflow
+  int min_size = leaf->GetMinSize();
+  
+  // Special case: root leaf
+  if (parent_path.empty()) {
+    // Root can have any number of keys (even 0)
+    if (leaf->GetSize() == 0) {
+      // Tree becomes empty
+      leaf_guard.Drop();
+      WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
+      auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
+      header->root_page_id_ = INVALID_PAGE_ID;
+    }
+    return;
+  }
+
+  // Non-root leaf: check underflow
+  if (leaf->GetSize() >= min_size) {
+    return;  // No underflow
+  }
+
+  leaf_guard.Drop();
+  HandleLeafUnderflow(parent_path, current_id);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::UpdateParentKey(const std::vector<page_id_t> &parent_path, 
+                                      page_id_t child_id, const KeyType &new_key) {
+  for (auto it = parent_path.rbegin(); it != parent_path.rend(); ++it) {
+    WritePageGuard parent_guard = bpm_->WritePage(*it);
+    auto parent = parent_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    for (int i = 1; i < parent->GetSize(); i++) {
+      if (parent->ValueAt(i) == child_id) {
+        parent->SetKeyAt(i, new_key);
+        return;
+      }
+    }
+  }
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto BPLUSTREE_TYPE::HandleLeafUnderflow(std::vector<page_id_t> &parent_path, 
+                                          page_id_t leaf_id) -> bool {
+  page_id_t parent_id = parent_path.back();
+  parent_path.pop_back();
+  
+  WritePageGuard parent_guard = bpm_->WritePage(parent_id);
+  auto parent = parent_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+  
+  // Find the index of this leaf in parent
+  int leaf_idx = -1;
+  for (int i = 0; i < parent->GetSize(); i++) {
+    if (parent->ValueAt(i) == leaf_id) {
+      leaf_idx = i;
+      break;
+    }
+  }
+
+  WritePageGuard leaf_guard = bpm_->WritePage(leaf_id);
+  auto leaf = leaf_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+  
+  // Try to borrow from left sibling
+  if (leaf_idx > 0) {
+    page_id_t left_sibling_id = parent->ValueAt(leaf_idx - 1);
+    WritePageGuard left_guard = bpm_->WritePage(left_sibling_id);
+    auto left_sibling = left_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+    
+    if (left_sibling->GetSize() > left_sibling->GetMinSize()) {
+      // Borrow from left
+      BorrowFromLeftLeaf(parent, leaf_idx, left_sibling, leaf);
+      return true;
+    }
+  }
+  
+  // Try to borrow from right sibling
+  if (leaf_idx < parent->GetSize() - 1) {
+    page_id_t right_sibling_id = parent->ValueAt(leaf_idx + 1);
+    WritePageGuard right_guard = bpm_->WritePage(right_sibling_id);
+    auto right_sibling = right_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+    
+    if (right_sibling->GetSize() > right_sibling->GetMinSize()) {
+      // Borrow from right
+      BorrowFromRightLeaf(parent, leaf_idx, leaf, right_sibling);
+      return true;
+    }
+  }
+  
+  // Cannot borrow - must merge
+  if (leaf_idx > 0) {
+    // Merge with left sibling
+    page_id_t left_sibling_id = parent->ValueAt(leaf_idx - 1);
+    leaf_guard.Drop();
+    
+    WritePageGuard left_guard = bpm_->WritePage(left_sibling_id);
+    auto left_sibling = left_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+    
+    WritePageGuard merge_leaf_guard = bpm_->WritePage(leaf_id);
+    auto merge_leaf = merge_leaf_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+    
+    MergeLeaves(parent, leaf_idx - 1, left_sibling, merge_leaf);
+    
+    left_guard.Drop();
+    merge_leaf_guard.Drop();
+    parent_guard.Drop();
+    
+    // Check parent underflow
+    WritePageGuard check_parent = bpm_->WritePage(parent_id);
+    auto check_p = check_parent.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    if (parent_path.empty()) {
+      // Parent is root
+      if (check_p->GetSize() == 1) {
+        // Root has only one child - make child new root
+        page_id_t new_root_id = check_p->ValueAt(0);
+        check_parent.Drop();
+        
+        WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
+        auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
+        header->root_page_id_ = new_root_id;
+      }
+    } else if (check_p->GetSize() < check_p->GetMinSize()) {
+      check_parent.Drop();
+      return HandleInternalUnderflow(parent_path, parent_id);
+    }
+    
+  } else {
+    // Merge with right sibling
+    page_id_t right_sibling_id = parent->ValueAt(leaf_idx + 1);
+    
+    WritePageGuard right_guard = bpm_->WritePage(right_sibling_id);
+    auto right_sibling = right_guard.AsMut<BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>>();
+    
+    MergeLeaves(parent, leaf_idx, leaf, right_sibling);
+    
+    leaf_guard.Drop();
+    right_guard.Drop();
+    parent_guard.Drop();
+    
+    // Check parent underflow
+    WritePageGuard check_parent = bpm_->WritePage(parent_id);
+    auto check_p = check_parent.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    if (parent_path.empty()) {
+      if (check_p->GetSize() == 1) {
+        page_id_t new_root_id = check_p->ValueAt(0);
+        check_parent.Drop();
+        
+        WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
+        auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
+        header->root_page_id_ = new_root_id;
+      }
+    } else if (check_p->GetSize() < check_p->GetMinSize()) {
+      check_parent.Drop();
+      return HandleInternalUnderflow(parent_path, parent_id);
+    }
+  }
+  
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::BorrowFromLeftLeaf(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent,
+                                         int leaf_idx,
+                                         BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *left_sibling,
+                                         BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *leaf) {
+  // Move last element from left sibling to front of leaf
+  KeyType borrow_key = left_sibling->KeyAt(left_sibling->GetSize() - 1);
+  ValueType borrow_val = left_sibling->rid_array_[left_sibling->GetSize() - 1];
+  
+  // Shift leaf elements right
+  for (int i = leaf->GetSize(); i > 0; i--) {
+    leaf->key_array_[i] = leaf->key_array_[i - 1];
+    leaf->rid_array_[i] = leaf->rid_array_[i - 1];
+  }
+  
+  leaf->key_array_[0] = borrow_key;
+  leaf->rid_array_[0] = borrow_val;
+  leaf->SetSize(leaf->GetSize() + 1);
+  
+  left_sibling->SetSize(left_sibling->GetSize() - 1);
+  
+  // Update parent key
+  parent->SetKeyAt(leaf_idx, leaf->KeyAt(0));
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::BorrowFromRightLeaf(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent,
+                                          int leaf_idx,
+                                          BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *leaf,
+                                          BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *right_sibling) {
+  // Move first element from right sibling to end of leaf
+  leaf->key_array_[leaf->GetSize()] = right_sibling->KeyAt(0);
+  leaf->rid_array_[leaf->GetSize()] = right_sibling->rid_array_[0];
+  leaf->SetSize(leaf->GetSize() + 1);
+  
+  // Shift right sibling elements left
+  for (int i = 0; i < right_sibling->GetSize() - 1; i++) {
+    right_sibling->key_array_[i] = right_sibling->key_array_[i + 1];
+    right_sibling->rid_array_[i] = right_sibling->rid_array_[i + 1];
+  }
+  right_sibling->SetSize(right_sibling->GetSize() - 1);
+  
+  // Update parent key
+  parent->SetKeyAt(leaf_idx + 1, right_sibling->KeyAt(0));
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::MergeLeaves(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent,
+                                  int left_idx,
+                                  BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *left_leaf,
+                                  BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *right_leaf) {
+  // Copy all from right to left
+  for (int i = 0; i < right_leaf->GetSize(); i++) {
+    left_leaf->key_array_[left_leaf->GetSize() + i] = right_leaf->KeyAt(i);
+    left_leaf->rid_array_[left_leaf->GetSize() + i] = right_leaf->rid_array_[i];
+  }
+  left_leaf->SetSize(left_leaf->GetSize() + right_leaf->GetSize());
+  
+  // Update sibling pointer
+  left_leaf->SetNextPageId(right_leaf->GetNextPageId());
+  
+  // Remove right child from parent
+  for (int i = left_idx + 1; i < parent->GetSize() - 1; i++) {
+    parent->key_array_[i] = parent->key_array_[i + 1];
+    parent->page_id_array_[i] = parent->page_id_array_[i + 1];
+  }
+  parent->SetSize(parent->GetSize() - 1);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto BPLUSTREE_TYPE::HandleInternalUnderflow(std::vector<page_id_t> &parent_path,
+                                               page_id_t internal_id) -> bool {
+  page_id_t parent_id = parent_path.back();
+  parent_path.pop_back();
+  
+  WritePageGuard parent_guard = bpm_->WritePage(parent_id);
+  auto parent = parent_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+  
+  // Find index
+  int internal_idx = -1;
+  for (int i = 0; i < parent->GetSize(); i++) {
+    if (parent->ValueAt(i) == internal_id) {
+      internal_idx = i;
+      break;
+    }
+  }
+  
+  WritePageGuard internal_guard = bpm_->WritePage(internal_id);
+  auto internal = internal_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+  
+  // Try borrow from left
+  if (internal_idx > 0) {
+    page_id_t left_sibling_id = parent->ValueAt(internal_idx - 1);
+    WritePageGuard left_guard = bpm_->WritePage(left_sibling_id);
+    auto left_sibling = left_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    if (left_sibling->GetSize() > left_sibling->GetMinSize()) {
+      BorrowFromLeftInternal(parent, internal_idx, left_sibling, internal);
+      return true;
+    }
+  }
+  
+  // Try borrow from right
+  if (internal_idx < parent->GetSize() - 1) {
+    page_id_t right_sibling_id = parent->ValueAt(internal_idx + 1);
+    WritePageGuard right_guard = bpm_->WritePage(right_sibling_id);
+    auto right_sibling = right_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    if (right_sibling->GetSize() > right_sibling->GetMinSize()) {
+      BorrowFromRightInternal(parent, internal_idx, internal, right_sibling);
+      return true;
+    }
+  }
+  
+  // Must merge
+  if (internal_idx > 0) {
+    page_id_t left_sibling_id = parent->ValueAt(internal_idx - 1);
+    internal_guard.Drop();
+    
+    WritePageGuard left_guard = bpm_->WritePage(left_sibling_id);
+    auto left_sibling = left_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    WritePageGuard merge_internal_guard = bpm_->WritePage(internal_id);
+    auto merge_internal = merge_internal_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    MergeInternal(parent, internal_idx - 1, left_sibling, merge_internal);
+    
+    left_guard.Drop();
+    merge_internal_guard.Drop();
+    parent_guard.Drop();
+    
+    WritePageGuard check_parent = bpm_->WritePage(parent_id);
+    auto check_p = check_parent.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    if (parent_path.empty()) {
+      if (check_p->GetSize() == 1) {
+        page_id_t new_root_id = check_p->ValueAt(0);
+        check_parent.Drop();
+        
+        WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
+        auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
+        header->root_page_id_ = new_root_id;
+      }
+    } else if (check_p->GetSize() < check_p->GetMinSize()) {
+      check_parent.Drop();
+      return HandleInternalUnderflow(parent_path, parent_id);
+    }
+  } else {
+    page_id_t right_sibling_id = parent->ValueAt(internal_idx + 1);
+    
+    WritePageGuard right_guard = bpm_->WritePage(right_sibling_id);
+    auto right_sibling = right_guard.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    MergeInternal(parent, internal_idx, internal, right_sibling);
+    
+    internal_guard.Drop();
+    right_guard.Drop();
+    parent_guard.Drop();
+    
+    WritePageGuard check_parent = bpm_->WritePage(parent_id);
+    auto check_p = check_parent.AsMut<BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>>();
+    
+    if (parent_path.empty()) {
+      if (check_p->GetSize() == 1) {
+        page_id_t new_root_id = check_p->ValueAt(0);
+        check_parent.Drop();
+        
+        WritePageGuard header_guard = bpm_->WritePage(header_page_id_);
+        auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
+        header->root_page_id_ = new_root_id;
+      }
+    } else if (check_p->GetSize() < check_p->GetMinSize()) {
+      check_parent.Drop();
+      return HandleInternalUnderflow(parent_path, parent_id);
+    }
+  }
+  
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::BorrowFromLeftInternal(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent,
+                                             int internal_idx,
+                                             BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *left_sibling,
+                                             BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *internal) {
+  // Pull down parent key and push up left sibling's last key
+  KeyType parent_key = parent->KeyAt(internal_idx);
+  
+  // Shift internal's keys/children right
+  for (int i = internal->GetSize(); i > 0; i--) {
+    internal->page_id_array_[i] = internal->page_id_array_[i - 1];
+    if (i > 1) {
+      internal->key_array_[i] = internal->key_array_[i - 1];
+    }
+  }
+  internal->key_array_[1] = parent_key;
+  internal->page_id_array_[0] = left_sibling->ValueAt(left_sibling->GetSize() - 1);
+  internal->SetSize(internal->GetSize() + 1);
+  
+  // Update parent with left sibling's last key
+  parent->SetKeyAt(internal_idx, left_sibling->KeyAt(left_sibling->GetSize() - 1));
+  
+  left_sibling->SetSize(left_sibling->GetSize() - 1);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::BorrowFromRightInternal(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent,
+                                              int internal_idx,
+                                              BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *internal,
+                                              BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *right_sibling) {
+  // Pull down parent key and push up right sibling's first key
+  KeyType parent_key = parent->KeyAt(internal_idx + 1);
+  
+  internal->key_array_[internal->GetSize()] = parent_key;
+  internal->page_id_array_[internal->GetSize()] = right_sibling->ValueAt(0);
+  internal->SetSize(internal->GetSize() + 1);
+  
+  // Update parent
+  parent->SetKeyAt(internal_idx + 1, right_sibling->KeyAt(1));
+  
+  // Shift right sibling left
+  right_sibling->page_id_array_[0] = right_sibling->ValueAt(1);
+  for (int i = 1; i < right_sibling->GetSize() - 1; i++) {
+    right_sibling->key_array_[i] = right_sibling->key_array_[i + 1];
+    right_sibling->page_id_array_[i] = right_sibling->page_id_array_[i + 1];
+  }
+  right_sibling->SetSize(right_sibling->GetSize() - 1);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::MergeInternal(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent,
+                                    int left_idx,
+                                    BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *left_internal,
+                                    BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *right_internal) {
+  // Pull down parent key
+  KeyType parent_key = parent->KeyAt(left_idx + 1);
+  left_internal->key_array_[left_internal->GetSize()] = parent_key;
+  
+  // Copy right to left
+  for (int i = 0; i < right_internal->GetSize(); i++) {
+    left_internal->page_id_array_[left_internal->GetSize() + i] = right_internal->ValueAt(i);
+    if (i > 0) {
+      left_internal->key_array_[left_internal->GetSize() + i] = right_internal->KeyAt(i);
+    }
+  }
+  left_internal->SetSize(left_internal->GetSize() + right_internal->GetSize());
+  
+  // Remove from parent
+  for (int i = left_idx + 1; i < parent->GetSize() - 1; i++) {
+    parent->key_array_[i] = parent->key_array_[i + 1];
+    parent->page_id_array_[i] = parent->page_id_array_[i + 1];
+  }
+  parent->SetSize(parent->GetSize() - 1);
 }
 
 /*****************************************************************************

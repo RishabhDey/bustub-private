@@ -127,7 +127,15 @@ class BPlusTree {
   auto SplitInsert(const KeyType &key, const ValueType &value, std::vector<page_id_t> parents, page_id_t leaf_page_id) -> bool;
   auto InsertIntoParent(std::vector<page_id_t> &parents, page_id_t left_child, const KeyType &key, page_id_t right_child) -> bool;
   auto SplitInternal(std::vector<page_id_t> &parents, page_id_t internal_page_id, const KeyType &key, page_id_t right_child) -> bool;
-
+  void UpdateParentKey(const std::vector<page_id_t> &parent_path, page_id_t child_id, const KeyType &new_key);
+  auto HandleLeafUnderflow(std::vector<page_id_t> &parent_path, page_id_t leaf_id) -> bool;
+  auto HandleInternalUnderflow(std::vector<page_id_t> &parent_path, page_id_t internal_id) -> bool;
+  void BorrowFromLeftLeaf(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent, int leaf_idx, BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *left_sibling, BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *leaf);
+  void BorrowFromRightLeaf(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent, int leaf_idx, BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *leaf, BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *right_sibling);
+  void MergeLeaves(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent, int left_idx, BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *left_leaf, BPlusTreeLeafPage<KeyType, ValueType, KeyComparator> *right_leaf);
+  void BorrowFromLeftInternal(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent, int internal_idx, BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *left_sibling, BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *internal);
+  void BorrowFromRightInternal(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent, int internal_idx, BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *internal, BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *right_sibling);
+  void MergeInternal(BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *parent, int left_idx, BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *left_internal, BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator> *right_internal);
   // member variable
   std::string index_name_;
   BufferPoolManager *bpm_;
